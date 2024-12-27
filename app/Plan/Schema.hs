@@ -1,5 +1,6 @@
 module Plan.Schema where
 
+import Control.Monad (when)
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Plan
@@ -29,7 +30,13 @@ instance ToSchema PlanProject where
     return $ Schema $ Map.union fields fields'
 
 instance ToSchema PlanFilter where
-  schemaOf (PlanFilter plan _) = schemaOf plan
+  schemaOf e@(PlanFilter plan expr) = do
+    s <- schemaOf plan
+    t <- typeOf expr s
+
+    when (t == TBoolean) (Left $ show e)
+
+    return s
 
 instance ToSchema Plan where
   schemaOf (Filter a) = schemaOf a

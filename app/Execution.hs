@@ -2,28 +2,47 @@
 
 module Execution where
 
+import Control.Monad.Except qualified as Except
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Trans.Class (MonadTrans (lift))
-import Control.Monad.Trans.Except (ExceptT)
-import Control.Monad.Trans.Reader (ReaderT)
-import Control.Monad.Trans.Writer (WriterT)
+import Control.Monad.Reader qualified as Reader
+import Control.Monad.Writer qualified as Writer
+import Data.Map (Map)
+import Data.Map qualified as Map
 import Execution.Data (RecordBatch)
 import Execution.Data qualified as Data
 import Plan (Plan)
 import Plan qualified
 
-data Datasource = IAB
+newtype Datasource = Datasource
+  { scan :: Maybe Plan.Expr -> Maybe [String] -> Execution ExecutionStep
+  }
 
-data DatasourceRegistry = AB
-
-data ExecutionContext = ExecutionContext {}
+newtype ExecutionContext = ExecutionContext {sources :: Map String Datasource}
 
 newtype Execution a = Execution
-  { runExecution :: ReaderT ExecutionContext (WriterT [String] IO) a
+  { runExecution :: Reader.ReaderT ExecutionContext (Writer.WriterT [String] (Except.ExceptT String IO)) a
   }
-  deriving (Functor, Applicative, Monad, MonadIO)
+  deriving
+    ( Applicative,
+      Except.MonadError String,
+      Functor,
+      Monad,
+      MonadIO,
+      Reader.MonadReader ExecutionContext,
+      Writer.MonadWriter [String]
+    )
 
 data ExecutionStep
   = Batch RecordBatch (Execution ExecutionStep)
   | End
-  | Error String
+
+source :: String -> Execution (Maybe Datasource)
+source name = do
+  sources' <- Reader.asks sources
+  return $ Map.lookup name sources'
+
+log :: String -> Execution ()
+log message = Writer.tell [message]
+
+fail :: String -> Execution a
+fail = Except.throwError
