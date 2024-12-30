@@ -1,48 +1,66 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GADTs #-}
 
 module Execution where
 
-import Control.Monad.Except qualified as Except
-import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Reader qualified as Reader
-import Control.Monad.Writer qualified as Writer
-import Data.Map (Map)
-import Data.Map qualified as Map
-import Execution.Data (RecordBatch)
-import Execution.Data qualified as Data
+import Data.Map as Map
+import Data.Typeable
+import Data.Vector.Mutable as IOVector
 import Plan (Plan)
 import Plan qualified
 
-newtype Datasource = Datasource
-  { scan :: Maybe Plan.Expr -> Maybe [String] -> Execution ExecutionStep
-  }
+data Column where
+  Column :: (Typeable a) => IOVector a -> Column
 
-newtype ExecutionContext = ExecutionContext {sources :: Map String Datasource}
+type Columns = Map String Column
 
-newtype Execution a = Execution
-  { runExecution :: Reader.ReaderT ExecutionContext (Writer.WriterT [String] (Except.ExceptT String IO)) a
-  }
-  deriving
-    ( Applicative,
-      Except.MonadError String,
-      Functor,
-      Monad,
-      MonadIO,
-      Reader.MonadReader ExecutionContext,
-      Writer.MonadWriter [String]
-    )
+evaluate :: Columns -> Plan.Expression a -> (Int -> IO a)
+evaluate columns (Plan.Ref name)
+  | Just (Column vector) <- Map.lookup name columns =
+      case cast vector of
+        Just vector' -> \i -> IOVector.unsafeRead vector' i
+        Nothing -> error ""
+  | otherwise = error ""
+evaluate _ (Plan.Literal a) = \_ -> return a
+evaluate columns (Plan.Compare l op r) = \i -> do
+  l'' <- l' i
+  r'' <- r' i
+  return $ cmp l'' r''
+  where
+    l' = evaluate columns l
+    r' = evaluate columns r
 
-data ExecutionStep
-  = Batch RecordBatch (Execution ExecutionStep)
-  | End
+    makeCmp :: (Ord a) => Plan.CompareOp -> a -> a -> Bool
+    makeCmp Plan.LE = (<)
+    makeCmp Plan.LEQ = (<=)
+    makeCmp Plan.EQ = (==)
+    makeCmp Plan.NEQ = (/=)
+    makeCmp Plan.GE = (>)
+    makeCmp Plan.GEQ = (>=)
 
-source :: String -> Execution (Maybe Datasource)
-source name = do
-  sources' <- Reader.asks sources
-  return $ Map.lookup name sources'
+    cmp = makeCmp op
+evaluate columns (Plan.Arithmetic l op r) = \i -> do
+  l'' <- l' i
+  r'' <- r' i
+  return $ arit l'' r''
+  where
+    l' = evaluate columns l
+    r' = evaluate columns r
 
-log :: String -> Execution ()
-log message = Writer.tell [message]
+    makeArit :: (Num a) => Plan.ArithmeticOp -> a -> a -> a
+    makeArit Plan.Plus = (+)
+    makeArit Plan.Minus = (-)
+    makeArit Plan.Mul = (*)
 
-fail :: String -> Execution a
-fail = Except.throwError
+    arit = makeArit op
+
+mapColumn :: IOVector a -> (a -> b) -> IO (IOVector b)
+mapColumn v f = do
+  let len = IOVector.length v
+  v'' <- IOVector.new len
+  apply len v v''
+  where
+    apply 0 _ r = return r
+    apply i v' v'' = do
+      x <- IOVector.read v' i
+      IOVector.unsafeWrite v'' (i - 1) (f x)
+      apply (i - 1) v' v''

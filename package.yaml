@@ -8,6 +8,7 @@ dependencies:
   - containers
   - mtl
   - transformers
+  - vector
 
 library:
   source-dirs: src

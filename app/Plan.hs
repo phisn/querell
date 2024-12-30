@@ -1,51 +1,19 @@
+{-# LANGUAGE GADTs #-}
+
 module Plan where
 
-import Data.Map (Map)
+import Data.Typeable
 
-data Field = Field String Type deriving (Show)
+data CompareOp = LE | LEQ | EQ | NEQ | GE | GEQ
 
-newtype Schema = Schema (Map String Field) deriving (Show)
+data ArithmeticOp = Plus | Minus | Mul
 
-data Type = TInt | TString | TBoolean deriving (Show, Eq)
+data Expression a where
+  Ref :: (Typeable a) => String -> Expression a
+  Literal :: a -> Expression a
+  Compare :: (Ord a) => Expression a -> CompareOp -> Expression a -> Expression Bool
+  Arithmetic :: (Num a) => Expression a -> ArithmeticOp -> Expression a -> Expression a
 
-data BinarySymbol
-  = Plus
-  | Minus
-  | Multiply
-  | Equals
-  | Less
-  deriving (Show)
-
-data BinaryExpr
-  = BinaryExpr Expr BinarySymbol Expr
-  deriving (Show)
-
-data LiteralExpr
-  = Int Int
-  | String String
-  deriving (Show)
-
-data Expr
-  = Binary BinaryExpr
-  | Literal LiteralExpr
-  | Not Expr
-  | Reference String
-  deriving (Show)
-
-data Datasource = Datasource String Schema
-  deriving (Show)
-
-data PlanFilter = PlanFilter Plan Expr
-  deriving (Show)
-
-data PlanScan = PlanScan Datasource (Maybe [String])
-  deriving (Show)
-
-data PlanProject = PlanProject Plan [(Expr, String)]
-  deriving (Show)
-
-data Plan
-  = Scan PlanScan
-  | Project PlanProject
-  | Filter PlanFilter
-  deriving (Show)
+data Plan where
+  Scan :: String -> Plan
+  Filter :: Expression Bool -> Plan -> Plan
