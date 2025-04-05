@@ -1,61 +1,77 @@
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 
 module Execution where
 
+import Control.Monad.Except
 import Control.Monad.Except qualified as Except
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader qualified as Reader
 import Control.Monad.Writer qualified as Writer
+import Data.Kind (Type)
 import Data.Map as Map
+import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Typeable
 import Data.Vector.Mutable as IOVector
+import Data.Vector.Primitive.Mutable (Prim)
 import Plan (Plan)
 import Plan qualified
 import Streaming
 import Streaming.Prelude qualified as S
 
-data Column where
-  Column :: (Typeable a) => IOVector a -> Column
+data Column a where
+  PrimColumn :: (Prim a) => IOVector a -> Column a
 
-data Batch = Columns
-  { rowCount :: Int,
-    columns :: Map String Column
-  }
+columnRow :: (MonadIO m) => Column a -> Int -> m a
+columnRow (PrimColumn column) i = do
+  liftIO $ IOVector.read column i
 
-findColumn :: Batch -> String -> Maybe Column
-findColumn cs name = Map.lookup name (columns cs)
+data ColumnWrapped where
+  ColumnWrapped :: (Prim a) => Column a -> ColumnWrapped
 
-data Datasource where
-  Datasource ::
-    { scan :: Maybe (Plan.Expression Bool) -> Maybe [String] -> Execution [Batch]
+data Batch where
+  Columns ::
+    { batchColumns :: Map Text ColumnWrapped,
+      batchRows :: Int
     } ->
-    Datasource
+    Batch
 
-data ExecutionContext = ExecutionContext {batchSize :: Int, sources :: Map String Datasource}
+batchColumn :: (MonadError Text m) => Batch -> Text -> m ColumnWrapped
+batchColumn cs name =
+  maybe failure return batchLookup
+  where
+    batchLookup = Map.lookup name (batchColumns cs)
+    failure = throwError $ "Batch does not contain column " <> name
 
-newtype Inner a = Execution
-  { runExecution :: Reader.ReaderT ExecutionContext (Writer.WriterT [String] (Except.ExceptT String IO)) a
-  }
-  deriving
-    ( Applicative,
-      Except.MonadError String,
-      Functor,
-      Monad,
-      MonadIO,
-      Reader.MonadReader ExecutionContext,
-      Writer.MonadWriter [String]
-    )
+batchColumnTyped :: (Typeable a, MonadError Text m) => Batch -> Text -> m (Column a)
+batchColumnTyped cs name = do
+  column <- batchColumn cs name
+  castWithError column
 
-type Execution a = Stream (Of Batch) Inner a
-
-castWithError :: forall a b. (Typeable a, Typeable b) => a -> Either String b
+castWithError :: forall a b m. (Typeable a, Typeable b, Except.MonadError Text m) => a -> m b
 castWithError x =
   case cast x of
-    Just y -> Right y
+    Just y -> return y
     Nothing ->
-      Left $
+      throwError $
         "Type cast failed: cannot cast value of type "
-          ++ show (typeOf x)
-          ++ " to target type "
-          ++ show (typeRep (Proxy :: Proxy b))
-          ++ "."
+          <> (T.pack . show) (typeOf x)
+          <> " to target type "
+          <> (T.pack . show) (typeRep (Proxy :: Proxy b))
+          <> "."
+
+class ColumnBuilder c a | c -> a
+
+class (Monad m) => MonadBuildBatch m where
+  type BuilderResult m :: Type -> Type
+  buildBatchPrim :: forall a. (Prim a) => Int -> (Int -> ) -> m (Column a)
+
+class (Monad m) => MonadDatasource m where
+  datasourceScan :: Maybe (Plan.Expression Bool) -> Maybe [Text] -> Execution m [Batch]
+
+class (Monad m) => MonadExecutionContext m where
+  executionBatchSize :: m Int
+  executionScan :: Text -> Maybe (Plan.Expression Bool) -> Maybe [Text] -> Execution m ()
+
+type Execution a = Stream (Of Batch) a

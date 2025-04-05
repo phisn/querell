@@ -3,66 +3,75 @@
 module Execution.Evaluate where
 
 import Control.Monad qualified as Monad
+import Control.Monad.Except
+import Control.Monad.IO.Class
 import Data.Either (fromRight)
 import Data.Map as Map
+import Data.Text
 import Data.Typeable
 import Data.Vector.Mutable as IOVector
 import Execution
 import Plan qualified
 
-evaluate :: Batch -> Plan.Expression a -> Either String (Int -> IO a)
-evaluate columns (Plan.Ref name) =
-  case findColumn columns name of
-    Just (Column vector) -> IOVector.unsafeRead <$> castWithError vector
-    Nothing -> Left $ "Unable to find column " ++ name
-evaluate _ (Plan.Literal a) = return $ \_ -> return a
-evaluate columns (Plan.Compare l op r) = do
-  l' <- evaluate columns l
-  r' <- evaluate columns r
+evaluate :: (MonadError Text m, MonadIO m) => Batch -> Plan.Expression a -> m (Column a)
+evaluate batch expr = do
+  let rows = batchRows batch
+  f <- evaluateF batch expr
+  result <- liftIO $ IOVector.new $ rows
+
+  Monad.forM_ [0 .. (rows - 1)] $ \i -> do
+    element <- f i
+    liftIO $ IOVector.write result i element
+
+  return result
+
+evaluateF :: (MonadError Text m, MonadIO m) => Batch -> Plan.Expression a -> m (Int -> m a)
+evaluateF columns (Plan.Ref name) = do
+  column <- batchColumn columns name
+  typed <- castWithError column
+  return $ liftIO <$> IOVector.unsafeRead typed
+evaluateF _ (Plan.Literal a) = return $ \_ -> return a
+evaluateF columns (Plan.Compare l op r) = do
+  l' <- evaluateF columns l
+  r' <- evaluateF columns r
   return $ \i -> do
     l'' <- l' i
     r'' <- r' i
-    return $ cmp l'' r''
+    return $ f l'' r''
   where
-    cmp = makeCmp op
+    f = makef op
 
-    makeCmp :: (Ord a) => Plan.CompareOp -> a -> a -> Bool
-    makeCmp Plan.LE = (<)
-    makeCmp Plan.LEQ = (<=)
-    makeCmp Plan.EQ = (==)
-    makeCmp Plan.NEQ = (/=)
-    makeCmp Plan.GE = (>)
-    makeCmp Plan.GEQ = (>=)
-evaluate columns (Plan.Arithmetic l op r) = do
-  l' <- evaluate columns l
-  r' <- evaluate columns r
+    makef :: (Ord a) => Plan.CompareOp -> a -> a -> Bool
+    makef Plan.LE = (<)
+    makef Plan.LEQ = (<=)
+    makef Plan.EQ = (==)
+    makef Plan.NEQ = (/=)
+    makef Plan.GE = (>)
+    makef Plan.GEQ = (>=)
+evaluateF columns (Plan.Arithmetic l op r) = do
+  l' <- evaluateF columns l
+  r' <- evaluateF columns r
   return $ \i -> do
     l'' <- l' i
     r'' <- r' i
-    return $ arit l'' r''
+    return $ f l'' r''
   where
-    arit = makeArit op
+    f = makef op
 
-    makeArit :: (Num a) => Plan.ArithmeticOp -> a -> a -> a
-    makeArit Plan.Plus = (+)
-    makeArit Plan.Minus = (-)
-    makeArit Plan.Mul = (*)
+    makef :: (Num a) => Plan.ArithmeticOp -> a -> a -> a
+    makef Plan.Plus = (+)
+    makef Plan.Minus = (-)
+    makef Plan.Mul = (*)
+evaluateF columns (Plan.Logical l op r) = do
+  l' <- evaluateF columns l
+  r' <- evaluateF columns r
+  return $ \i -> do
+    l'' <- l' i
+    r'' <- r' i
+    return $ f l'' r''
+  where
+    f = makef op
 
-test :: Batch -> Plan.Expression Bool -> IO ()
-test columns expr = do
-  let f = fromRight (error "") $ evaluate columns expr
-
-  let len = rowCount columns
-  target <- IOVector.new len
-
-  passed <-
-    Monad.foldM
-      ( \acc i -> do
-          b <- f i
-          IOVector.unsafeWrite target i b
-          return $ acc + fromEnum b
-      )
-      (0 :: Int)
-      [0 .. len - 1]
-
-  return ()
+    makef :: Plan.LogicalOp -> Bool -> Bool -> Bool
+    makef Plan.And = (&&)
+    makef Plan.Or = (||)

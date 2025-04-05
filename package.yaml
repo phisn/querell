@@ -10,6 +10,7 @@ dependencies:
   - mtl
   - transformers
   - streaming
+  - text
   - vector
 
 library:
@@ -41,8 +42,10 @@ ghc-options:
   - -Wno-unused-top-binds
 
 default-extensions:
+  - FunctionalDependencies
   - GADTs
   - OverloadedStrings
   - OverloadedRecordDot
   - OverloadedRecordUpdate
+  - TypeFamilies
   - TupleSections

@@ -1,5 +1,3 @@
-{-# LANGUAGE GADTs #-}
-
 module Execution.Data where
 
 import Data.Map (Map)
