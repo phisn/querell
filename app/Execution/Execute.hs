@@ -9,8 +9,10 @@ import Control.Monad.Reader qualified as Reader
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (maybeToExceptT)
 import Control.Monad.Writer qualified as Writer
+import Data.Bits (Bits (xor))
 import Data.Either (fromRight)
 import Data.Either.Combinators (maybeToRight)
+import Data.IORef qualified as IORef
 import Data.Map qualified as Map
 import Data.Text (Text)
 import Data.Vector.Mutable as IOVector
@@ -21,33 +23,74 @@ import Plan qualified
 import Streaming
 import Streaming.Prelude qualified as S
 
-execute :: forall m. (MonadError Text m, MonadIO m) => Plan -> Execution m ()
-execute (Plan.Filter expr source) = do
-  S.mapM filterBatch $ execute source
-  where
-    filterBatch :: Batch -> m Batch
-    filterBatch batch = do
-      filterMask <- evaluate batch expr
+{--
+data BuilderWrapped where
+  BuilderWrapped :: ColumnBuilder a -> BuilderWrapped
 
-      x <- (flip mapM) (batchColumns batch) $ \(ColumnWrapped c) -> do
-        x <- filterColumn (batchRows batch, 0, 0) filterMask c
+data BatchBuilder
+
+execute :: forall m. (MonadExecutionContext m, MonadColumnFactory m, MonadError Text m, MonadIO m) => Plan -> Execution m ()
+execute (Plan.Filter expr source) = do
+  filterProcess (execute source) Map.empty 0
+  where
+    filterProcess :: Execution m () -> Map.Map Text BuilderWrapped -> Int -> Execution m ()
+    filterProcess stream bufferBatch = do
+      eitherItem <- lift $ S.next stream
+
+      case eitherItem of
+        Left () -> S.yield bufferBatch
+        Right item -> filterProcessBatch bufferBatch item
+
+    filterProcessBatch :: Batch -> (Batch, Execution m ()) -> Execution m ()
+    filterProcessBatch bufferBatch (batch, stream) = do
+      let incomingRows = batchRows batch
+      maxRows <- lift executionBatchSize
+      let rows = batchRows bufferBatch
+      let rowsToWrite = min incomingRows $ maxRows - rows
+      let rowsRemain = incomingRows - rowsToWrite
+      let bufferBatchColumns = batchColumns batch
+
+      Monad.forM_ (Map.toList $ batchColumns batch) $ \(key, value) -> do
+        bufferColumn <- case Map.lookup key bufferBatchColumns of
+          Just x -> return x
+          Nothing -> error ""
+
         error ""
 
-      return batch
+      error ""
 
-    filterColumn :: (Int, Int, Int) -> Column Bool -> Column a -> m c
-    filterColumn (n, indexRead, indexWrite) filterMask column
-      | indexRead >= n = return indexWrite
-      | otherwise = do
-          f <- liftIO $ IOVector.read filterMask indexRead
+{--
+S.mapM filterBatch
+where
+  filterBatch :: Batch -> m Batch
+  filterBatch batch = do
+    let rows = batchRows batch
 
-          if f
-            then do
-              x <- liftIO $ IOVector.read column indexRead
-              liftIO $ IOVector.write column indexWrite x
-              filterColumn (n, indexRead + 1, indexWrite + 1) filterMask column
-            else
-              filterColumn (n, indexRead + 1, indexWrite) filterMask column
+    (filterMaskCount, filterMask) <- evaluateFold batch expr 0 $
+      \aggr result -> aggr + fromEnum result
+
+    case filterMaskCount of
+      0 -> batchMapColumnsM batch $ \x -> return x
+      _ | rows == filterMaskCount -> return batch
+      _ ->
+        batchMapColumnsM batch $ \x -> do
+          column <- filterColumn filterMaskCount rows x
+          return $ ColumnWrapped column
+
+  filterColumn :: Int -> Int -> Column Bool -> Column a -> m (Column b)
+  filterColumn filterMaskCount n filterMask column = do
+    Monad.forM_ [0 .. (n - 1)] $ \i -> do
+      error ""
+    error ""
+    where
+      filterPass = do
+        x <- liftIO $ IOVector.read column indexRead
+        liftIO $ IOVector.write column indexWrite x
+        filterColumn (filterMaskCount, n, indexRead + 1, indexWrite + 1) filterMask column
+
+      filterStop =
+        filterColumn (filterMaskCount, n, indexRead + 1, indexWrite) filterMask column
+        -}
 execute _ = error ""
 
 {--
@@ -109,4 +152,5 @@ myOperator2 input expr = do
   return ()
 
   S.yield $ error ""
+--}
 --}

@@ -1,5 +1,3 @@
-{-# LANGUAGE GADTs #-}
-
 module Execution.Evaluate where
 
 import Control.Monad qualified as Monad
@@ -11,33 +9,48 @@ import Data.Text
 import Data.Typeable
 import Data.Vector.Mutable as IOVector
 import Execution
+import GHC.IORef qualified as IORef
 import Plan qualified
 
-evaluate :: (MonadError Text m, MonadIO m) => Batch -> Plan.Expression a -> m (Column a)
+{--
+evaluateFold :: (MonadColumnFactory m, MonadError Text m, MonadIO m) => Batch -> Plan.Expression a -> aggr -> (aggr -> a -> aggr) -> m (aggr, Column a)
+evaluateFold batch expr d folding = do
+  let rows = batchRows batch
+  builder <- builderNew rows
+
+  f <- evaluateF batch expr
+
+  let folding' aggr i = do
+        let r = f i
+        builderWrite builder i r
+        return $ folding aggr r
+
+  aggregated <- Monad.foldM folding' d [0 .. (rows - 1)]
+  result <- builderFinish builder
+
+  return (aggregated, result)
+
+evaluate :: (MonadColumnFactory m, MonadError Text m, MonadIO m) => Batch -> Plan.Expression a -> m (Column a)
 evaluate batch expr = do
   let rows = batchRows batch
+  builder <- builderNew rows
+
   f <- evaluateF batch expr
-  result <- liftIO $ IOVector.new $ rows
 
   Monad.forM_ [0 .. (rows - 1)] $ \i -> do
-    element <- f i
-    liftIO $ IOVector.write result i element
+    builderWrite builder i $ f i
 
-  return result
+  builderFinish builder
 
-evaluateF :: (MonadError Text m, MonadIO m) => Batch -> Plan.Expression a -> m (Int -> m a)
+evaluateF :: (MonadError Text m, MonadIO m) => Batch -> Plan.Expression a -> m (Int -> a)
 evaluateF columns (Plan.Ref name) = do
-  column <- batchColumn columns name
-  typed <- castWithError column
-  return $ liftIO <$> IOVector.unsafeRead typed
-evaluateF _ (Plan.Literal a) = return $ \_ -> return a
+  column <- batchColumnTyped columns name
+  return $ columnRow column
+evaluateF _ (Plan.Literal a) = return $ \_ -> a
 evaluateF columns (Plan.Compare l op r) = do
   l' <- evaluateF columns l
   r' <- evaluateF columns r
-  return $ \i -> do
-    l'' <- l' i
-    r'' <- r' i
-    return $ f l'' r''
+  return $ \i -> f (l' i) (r' i)
   where
     f = makef op
 
@@ -51,10 +64,7 @@ evaluateF columns (Plan.Compare l op r) = do
 evaluateF columns (Plan.Arithmetic l op r) = do
   l' <- evaluateF columns l
   r' <- evaluateF columns r
-  return $ \i -> do
-    l'' <- l' i
-    r'' <- r' i
-    return $ f l'' r''
+  return $ \i -> f (l' i) (r' i)
   where
     f = makef op
 
@@ -65,13 +75,11 @@ evaluateF columns (Plan.Arithmetic l op r) = do
 evaluateF columns (Plan.Logical l op r) = do
   l' <- evaluateF columns l
   r' <- evaluateF columns r
-  return $ \i -> do
-    l'' <- l' i
-    r'' <- r' i
-    return $ f l'' r''
+  return $ \i -> f (l' i) (r' i)
   where
     f = makef op
 
     makef :: Plan.LogicalOp -> Bool -> Bool -> Bool
     makef Plan.And = (&&)
     makef Plan.Or = (||)
+--}
