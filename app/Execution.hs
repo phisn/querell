@@ -13,18 +13,108 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Typeable
 import Data.Vector qualified as Vector
-import Data.Vector.Mutable qualified as IOVector
-import Data.Vector.Primitive qualified as PVector
-import Data.Vector.Primitive.Mutable qualified as PIOVector
+import Data.Vector.Unboxed (Unbox)
+import Data.Vector.Unboxed qualified as VectorU
+import GHC.Int
 import Plan (Plan)
 import Plan qualified
 import Streaming
 import Streaming.Prelude qualified as S
 
 {--
-data Column a where
-  PrimColumn :: (PVector.Prim a) => PVector.Vector a -> Column a
+data ArithmeticProps a' a'' = ArithmeticProps
+  { l :: ExecutionExpr a',
+    arithmeticOp :: Plan.ArithmeticOp,
+    r :: ExecutionExpr a''
+  }
 
+data ExecutionExpr a where
+  Arithmetic :: (Num a, Num a', Num a'') => ArithmeticProps a' a'' -> ExecutionExpr a
+  Column :: Int -> ExecutionExpr a
+
+exprToExecution :: Plan.Expression -> ExecutionExpr a
+exprToExecution e@(Plan.Arithmetic a)
+  | t == Plan.CTInt = ir
+  where
+    ir = Arithmetic $ ArithmeticProps {l = l, arithmeticOp = a.arithmeticOp, r = r}
+
+    t = exprType e
+    l = exprToExecution a.l
+    r = exprToExecution a.r
+exprToExecution (Plan.Column index) = error ""
+exprToExecution _ = error ""
+
+exprType :: Plan.Expression -> Plan.ColumnType
+exprType = error ""
+--}
+
+newtype Dense a = Dense {getDense :: VectorU.Vector a}
+
+newtype Scalar a = Scalar {getScalar :: a}
+
+data Column where
+  FloatColumn :: VectorU.Vector Float -> Column
+  Int32Column :: VectorU.Vector Int32 -> Column
+  StringColumn :: VectorU.Vector Text -> Column
+  ScalarColumn :: Plan.Value -> Column
+
+class (Unbox a, Typeable a) => ColBase a where
+  fromValue :: Plan.Value -> Maybe a
+  rebox :: DynamicColumn a -> Column
+
+instance ColBase Float where
+  fromValue (Plan.Float x) = Just x
+  fromValue _ = Nothing
+  rebox (NormalDynamic x) = FloatColumn x
+  rebox (ScalarDynamic x) = ScalarColumn (Plan.Float x)
+
+instance ColBase Int32 where
+  fromValue (Plan.Int32 x) = Just x
+  fromValue _ = Nothing
+  rebox (NormalDynamic x) = Int32Column x
+  rebox (ScalarDynamic x) = ScalarColumn (Plan.Int32 x)
+
+class (Num a, ColBase a) => ColNum a where
+  divide :: a -> a -> a
+
+instance ColNum Float where
+  divide = (/)
+
+instance ColNum Int32 where
+  divide = div
+
+data NumericColumn where
+  NumericColumn :: (ColNum a) => DynamicColumn a -> NumericColumn
+
+-- | Fail if the column is not numeric.
+asNumeric :: (MonadError T.Text m) => Column -> m NumericColumn
+asNumeric (FloatColumn v) = return (NumericColumn (NormalDynamic v))
+asNumeric (Int32Column v) = return (NumericColumn (NormalDynamic v))
+asNumeric (ScalarColumn (Plan.Float x)) =
+  return $ NumericColumn $ ScalarDynamic $ x
+asNumeric (ScalarColumn (Plan.Int32 x)) =
+  return $ NumericColumn $ ScalarDynamic $ x
+asNumeric _ = throwError "non-numeric column"
+
+data DynamicColumn a where
+  NormalDynamic :: (ColBase a) => !(VectorU.Vector a) -> DynamicColumn a
+  ScalarDynamic :: (ColBase a) => !a -> DynamicColumn a
+
+binaryColumnOp :: (a -> a -> a) -> DynamicColumn a -> DynamicColumn a -> DynamicColumn a
+binaryColumnOp f (NormalDynamic l) (NormalDynamic r) = NormalDynamic $ VectorU.zipWith f l r
+binaryColumnOp f (ScalarDynamic l) (NormalDynamic r) = NormalDynamic $ VectorU.map (f l) r
+binaryColumnOp f (NormalDynamic l) (ScalarDynamic r) = NormalDynamic $ VectorU.map (f r) l
+binaryColumnOp f (ScalarDynamic l) (ScalarDynamic r) = ScalarDynamic $ f l r
+
+data Batch where
+  Batch ::
+    { columns :: Vector.Vector Column,
+      rows :: Int,
+      schema :: Plan.Schema
+    } ->
+    Batch
+
+{--
 columnRow :: Column a -> Int -> a
 columnRow (PrimColumn column) i = column PVector.! i
 
@@ -39,17 +129,9 @@ builderFinish :: (MonadIO m) => ColumnBuilder a -> m (Column a)
 builderFinish (PrimColumnBuilder vector) = do
   vector' <- liftIO $ PVector.unsafeFreeze vector
   return $ PrimColumn vector'
+--}
 
-data ColumnWrapped where
-  ColumnWrapped :: (Typeable a) => Column a -> ColumnWrapped
-
-data Batch where
-  Batch ::
-    { batchColumns :: Vector.Vector ColumnWrapped,
-      batchRows :: Int
-    } ->
-    Batch
-
+{--
 batchMapColumnsM :: (Monad m) => Batch -> (ColumnWrapped -> m ColumnWrapped) -> m Batch
 batchMapColumnsM (Batch {batchColumns, batchRows}) f = do
   batchColumns' <- mapM f batchColumns
@@ -75,7 +157,9 @@ batchColumnTyped cs name = do
           <> " to target type "
           <> (T.pack . show) (typeRep (Proxy :: Proxy a))
           <> "."
+--}
 
+{--
 class (Monad m) => MonadColumnFactory m where
   builderNew :: Int -> m (ColumnBuilder a)
 

@@ -7,24 +7,29 @@ import Data.Text
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Typeable
+import GHC.Int
 
-data ArithmeticOp = Plus | Minus | Mul
+data ArithOp = Div | Minus | Mul | Plus deriving (Show)
 
-data CompareOp = LE | LEQ | EQ | NEQ | GE | GEQ
+data CompOp = LE | LEQ | EQ | NEQ | GE | GEQ deriving (Show)
 
-data LogicalOp = And | Or
+data LogicalOp = And | Or deriving (Show)
 
-data Expression a where
-  Arithmetic :: (Num a) => Expression a -> ArithmeticOp -> Expression a -> Expression a
-  Compare :: (Ord a) => Expression a -> CompareOp -> Expression a -> Expression Bool
-  Literal :: a -> Expression a
-  Logical :: Expression Bool -> LogicalOp -> Expression Bool -> Expression Bool
-  Ref :: (Typeable a) => Text -> Expression a
+data Value where
+  Float :: Float -> Value
+  Int32 :: Int32 -> Value
+  deriving (Show)
+
+data Expr where
+  Arithmetic :: Expr -> ArithOp -> Expr -> Expr
+  Column :: Int -> Expr
+  Literal :: Value -> Expr
+  deriving (Show)
 
 data Plan where
   Filter ::
     { schema :: Schema,
-      filterExpr :: Expression Bool,
+      filterExpr :: Expr,
       child :: Plan
     } ->
     Plan
@@ -76,6 +81,7 @@ schemaFields (Schema schema) = Map.elems schema
 schemaDerive :: Plan -> Schema
 schemaDerive = error ""
 
+{--
 schemaDeriveExpr :: Schema -> Expression a -> ColumnType
 schemaDeriveExpr schema (Arithmetic l _ r)
   | tl == CTInt && tr == CTInt = CTInt
@@ -89,3 +95,4 @@ schemaDeriveExpr schema (Compare l _ r)
   where
     tl = schemaDeriveExpr schema l
     tr = schemaDeriveExpr schema l
+--}
