@@ -6,6 +6,7 @@ import Control.Monad.Except qualified as Except
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader qualified as Reader
 import Control.Monad.Writer qualified as Writer
+import Data.Bit (Bit)
 import Data.IORef qualified as IORef
 import Data.Kind (Type)
 import Data.Map as Map
@@ -48,29 +49,25 @@ exprType :: Plan.Expression -> Plan.ColumnType
 exprType = error ""
 --}
 
-newtype Dense a = Dense {getDense :: VectorU.Vector a}
-
-newtype Scalar a = Scalar {getScalar :: a}
-
 data Column where
+  BoolColumn :: VectorU.Vector Bit -> Column
   FloatColumn :: VectorU.Vector Float -> Column
   Int32Column :: VectorU.Vector Int32 -> Column
   StringColumn :: VectorU.Vector Text -> Column
   ScalarColumn :: Plan.Value -> Column
 
 class (Unbox a, Typeable a) => ColBase a where
-  fromValue :: Plan.Value -> Maybe a
   rebox :: DynamicColumn a -> Column
 
+instance ColBase Bit where
+  rebox (NormalDynamic x) = BoolColumn x
+  rebox (ScalarDynamic x) = ScalarColumn (Plan.Bool x)
+
 instance ColBase Float where
-  fromValue (Plan.Float x) = Just x
-  fromValue _ = Nothing
   rebox (NormalDynamic x) = FloatColumn x
   rebox (ScalarDynamic x) = ScalarColumn (Plan.Float x)
 
 instance ColBase Int32 where
-  fromValue (Plan.Int32 x) = Just x
-  fromValue _ = Nothing
   rebox (NormalDynamic x) = Int32Column x
   rebox (ScalarDynamic x) = ScalarColumn (Plan.Int32 x)
 
@@ -88,13 +85,16 @@ data NumericColumn where
 
 -- | Fail if the column is not numeric.
 asNumeric :: (MonadError T.Text m) => Column -> m NumericColumn
-asNumeric (FloatColumn v) = return (NumericColumn (NormalDynamic v))
-asNumeric (Int32Column v) = return (NumericColumn (NormalDynamic v))
-asNumeric (ScalarColumn (Plan.Float x)) =
-  return $ NumericColumn $ ScalarDynamic $ x
-asNumeric (ScalarColumn (Plan.Int32 x)) =
-  return $ NumericColumn $ ScalarDynamic $ x
-asNumeric _ = throwError "non-numeric column"
+asNumeric (FloatColumn v) = return $ NumericColumn $ NormalDynamic v
+asNumeric (Int32Column v) = return $ NumericColumn $ NormalDynamic v
+asNumeric (ScalarColumn (Plan.Float x)) = return $ NumericColumn $ ScalarDynamic $ x
+asNumeric (ScalarColumn (Plan.Int32 x)) = return $ NumericColumn $ ScalarDynamic $ x
+asNumeric _ = throwError "Got non-numeric column"
+
+asBoolean :: (MonadError T.Text m) => Column -> m (DynamicColumn Bit)
+asBoolean (BoolColumn v) = return $ NormalDynamic $ v
+asBoolean (ScalarColumn (Plan.Bool x)) = return $ ScalarDynamic $ x
+asBoolean _ = throwError "Got non-boolean column"
 
 data DynamicColumn a where
   NormalDynamic :: (ColBase a) => !(VectorU.Vector a) -> DynamicColumn a

@@ -3,6 +3,8 @@ module Execution.Evaluate where
 import Control.Monad qualified as Monad
 import Control.Monad.Except
 import Control.Monad.IO.Class
+import Data.Bit
+import Data.Bits qualified as Bits
 import Data.Either (fromRight)
 import Data.Map as Map
 import Data.Text qualified as T
@@ -29,6 +31,29 @@ evaluate batch (Plan.Arithmetic l op r) = do
     f Plan.Mul = (*)
     f Plan.Plus = (+)
     f _ = error "Unknown arithmetic operator"
+evaluate batch (Plan.Logical l op r) = do
+  lraw <- evaluate batch l
+  rraw <- evaluate batch r
+
+  l' <- asBoolean lraw
+  r' <- asBoolean lraw
+
+  return $ case (l', r', op) of
+    (NormalDynamic l'', NormalDynamic r'', _) -> rebox $ NormalDynamic $ VectorU.zipWith (f op) l'' r''
+    (NormalDynamic l'', ScalarDynamic (Bit True), Plan.And) -> lraw
+    (NormalDynamic l'', ScalarDynamic (Bit False), Plan.And) -> rraw
+    (ScalarDynamic (Bit True), NormalDynamic r'', Plan.And) -> rraw
+    (ScalarDynamic (Bit False), NormalDynamic r'', Plan.And) -> lraw
+    (NormalDynamic l'', ScalarDynamic (Bit True), Plan.Or) -> rraw
+    (NormalDynamic l'', ScalarDynamic (Bit False), Plan.Or) -> lraw
+    (ScalarDynamic (Bit True), NormalDynamic r'', Plan.Or) -> lraw
+    (ScalarDynamic (Bit False), NormalDynamic r'', Plan.Or) -> rraw
+    (ScalarDynamic l'', ScalarDynamic r'', _) -> rebox $ ScalarDynamic $ (f op) l'' r''
+  where
+    f Plan.Or = (Bits..|.)
+    f Plan.And = (Bits..&.)
+evaluate batch (Plan.Column index) =
+  return $ batch.columns Vector.! index
 evaluate _ _ = error ""
 
 {--

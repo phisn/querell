@@ -2,6 +2,7 @@ module Plan where
 
 import Control.Monad.Except
 import Control.Monad.Except qualified as Except
+import Data.Bit (Bit)
 import Data.Map as Map
 import Data.Text
 import Data.Text (Text)
@@ -16,6 +17,7 @@ data CompOp = LE | LEQ | EQ | NEQ | GE | GEQ deriving (Show)
 data LogicalOp = And | Or deriving (Show)
 
 data Value where
+  Bool :: Bit -> Value
   Float :: Float -> Value
   Int32 :: Int32 -> Value
   deriving (Show)
@@ -24,6 +26,7 @@ data Expr where
   Arithmetic :: Expr -> ArithOp -> Expr -> Expr
   Column :: Int -> Expr
   Literal :: Value -> Expr
+  Logical :: Expr -> LogicalOp -> Expr -> Expr
   deriving (Show)
 
 data Plan where
