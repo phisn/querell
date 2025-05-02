@@ -18,7 +18,7 @@ getDefName _ = Nothing
 findSig :: Name -> [Dec] -> Q Dec
 findSig n ds =
   maybe
-    (fail $ "unroll: no type signature for “" ++ nameBase n)
+    (fail $ "unroll: no type signature for \8216" ++ nameBase n)
     pure
     (listToMaybe [s | s@(SigD m _) <- ds, m == n])
 
@@ -58,8 +58,8 @@ unroll k qDecs = do
       addRec _ = error "unroll: only plain function definitions supported"
 
   let workerFun = addRec originalDef
-      workerTy = ArrowT `AppT` origTy `AppT` origTy -- (a -> r) -> a -> r
-  let cloneNames = [mkName (nameBase baseName ++ show i) | i <- [0 .. k - 1]]
+      workerTy = ArrowT `AppT` origTy `AppT` origTy
+      cloneNames = [mkName (nameBase baseName ++ show i) | i <- [0 .. k - 1]]
       xName = mkName (nameBase baseName ++ "X")
 
       cloneSigs = [SigD n workerTy | n <- cloneNames ++ [xName]]
@@ -80,8 +80,12 @@ unroll k qDecs = do
       unrolledDef = FunD unrolledName [Clause [] (NormalB chain) []]
       unrolledSig = SigD unrolledName origTy
 
-  return $
+      inlineP n = PragmaD (InlineP n Inline FunLike AllPhases)
+      inlinePragmas = map inlineP (cloneNames ++ [xName, unrolledPrimeName, unrolledName])
+
+  pure $
     cloneSigs
+      ++ inlinePragmas
       ++ cloneDefs
       ++ [ unrolledPrimeSig,
            unrolledPrimeDef,
