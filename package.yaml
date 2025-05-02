@@ -7,11 +7,14 @@ dependencies:
   - base >= 4.7 && < 5
   - bitvec
   - containers
+  - criterion
   - either
   - monad-loops
   - mtl
   - transformers
   - streaming
+  - syb
+  - template-haskell
   - text
   - vector
 
@@ -43,6 +46,9 @@ ghc-options:
   - -Wno-unused-imports
   - -Wno-unused-top-binds
   - -Wno-partial-fields
+  - -O2
+  - -fllvm
+  - -funbox-strict-fields
 
 default-extensions:
   - FunctionalDependencies
@@ -51,5 +57,6 @@ default-extensions:
   - OverloadedStrings
   - OverloadedRecordDot
   - OverloadedRecordUpdate
+  - TemplateHaskell
   - TypeFamilies
   - TupleSections

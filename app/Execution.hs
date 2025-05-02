@@ -1,3 +1,7 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE UnboxedTuples #-}
+
 module Execution where
 
 import Control.Monad (when)
@@ -22,39 +26,13 @@ import Plan qualified
 import Streaming
 import Streaming.Prelude qualified as S
 
-{--
-data ArithmeticProps a' a'' = ArithmeticProps
-  { l :: ExecutionExpr a',
-    arithmeticOp :: Plan.ArithmeticOp,
-    r :: ExecutionExpr a''
-  }
-
-data ExecutionExpr a where
-  Arithmetic :: (Num a, Num a', Num a'') => ArithmeticProps a' a'' -> ExecutionExpr a
-  Column :: Int -> ExecutionExpr a
-
-exprToExecution :: Plan.Expression -> ExecutionExpr a
-exprToExecution e@(Plan.Arithmetic a)
-  | t == Plan.CTInt = ir
-  where
-    ir = Arithmetic $ ArithmeticProps {l = l, arithmeticOp = a.arithmeticOp, r = r}
-
-    t = exprType e
-    l = exprToExecution a.l
-    r = exprToExecution a.r
-exprToExecution (Plan.Column index) = error ""
-exprToExecution _ = error ""
-
-exprType :: Plan.Expression -> Plan.ColumnType
-exprType = error ""
---}
-
 data Column where
   BoolColumn :: VectorU.Vector Bit -> Column
   FloatColumn :: VectorU.Vector Float -> Column
   Int32Column :: VectorU.Vector Int32 -> Column
-  StringColumn :: VectorU.Vector Text -> Column
+  StringColumn :: Vector.Vector Text -> Column
   ScalarColumn :: Plan.Value -> Column
+  deriving (Show)
 
 class (Unbox a, Typeable a) => ColBase a where
   rebox :: DynamicColumn a -> Column
@@ -96,10 +74,12 @@ asBoolean (BoolColumn v) = return $ NormalDynamic $ v
 asBoolean (ScalarColumn (Plan.Bool x)) = return $ ScalarDynamic $ x
 asBoolean _ = throwError "Got non-boolean column"
 
+-- Bang & UNPACK hot fields
 data DynamicColumn a where
-  NormalDynamic :: (ColBase a) => !(VectorU.Vector a) -> DynamicColumn a
-  ScalarDynamic :: (ColBase a) => !a -> DynamicColumn a
+  NormalDynamic :: (ColBase a) => {-# UNPACK #-} !(VectorU.Vector a) -> DynamicColumn a
+  ScalarDynamic :: (ColBase a) => {-# UNPACK #-} !a -> DynamicColumn a
 
+{-# INLINE binaryColumnOp #-}
 binaryColumnOp :: (a -> a -> a) -> DynamicColumn a -> DynamicColumn a -> DynamicColumn a
 binaryColumnOp f (NormalDynamic l) (NormalDynamic r) = NormalDynamic $ VectorU.zipWith f l r
 binaryColumnOp f (ScalarDynamic l) (NormalDynamic r) = NormalDynamic $ VectorU.map (f l) r
@@ -109,8 +89,7 @@ binaryColumnOp f (ScalarDynamic l) (ScalarDynamic r) = ScalarDynamic $ f l r
 data Batch where
   Batch ::
     { columns :: Vector.Vector Column,
-      rows :: Int,
-      schema :: Plan.Schema
+      rows :: Int
     } ->
     Batch
 
