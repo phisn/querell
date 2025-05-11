@@ -6,6 +6,7 @@ language: GHC2021
 dependencies:
   - base >= 4.7 && < 5
   - bitvec
+  - constraints
   - containers
   - criterion
   - either

@@ -27,11 +27,11 @@ import Streaming
 import Streaming.Prelude qualified as S
 
 data Column where
-  BoolColumn :: VectorU.Vector Bit -> Column
-  FloatColumn :: VectorU.Vector Float -> Column
-  Int32Column :: VectorU.Vector Int32 -> Column
-  StringColumn :: Vector.Vector Text -> Column
-  ScalarColumn :: Plan.Value -> Column
+  BoolColumn :: !(VectorU.Vector Bit) -> Column
+  FloatColumn :: !(VectorU.Vector Float) -> Column
+  Int32Column :: !(VectorU.Vector Int32) -> Column
+  StringColumn :: !(Vector.Vector Text) -> Column
+  ScalarColumn :: !(Plan.Value) -> Column
   deriving (Show)
 
 class (Unbox a, Typeable a) => ColBase a where
